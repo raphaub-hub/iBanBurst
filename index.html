@@ -50,6 +50,24 @@ canvas { display:block; flex-shrink:0; }
 #fire-icon { font-size:30px; line-height:1; }
 .ctrl-hint { font-family:'Courier New',monospace; font-size:10px; opacity:0.55; }
 
+/* ── Paysage mobile : contrôles dans les coins ── */
+body.ls-mob #controls {
+  position:fixed; inset:0;
+  background:transparent; border:none;
+  padding:0; gap:0; height:auto; width:auto;
+  pointer-events:none;
+}
+body.ls-mob #btn-left {
+  position:absolute; bottom:14px; left:14px;
+  width:110px; height:80px;
+  flex:none; pointer-events:all;
+}
+body.ls-mob #btn-fire {
+  position:absolute; bottom:14px; right:14px;
+  width:96px; height:80px;
+  flex:none; pointer-events:all;
+}
+
 /* ── Toast ── */
 #toast {
   position:fixed; top:48px; left:50%; transform:translateX(-50%);
@@ -94,14 +112,24 @@ let isMobile=false;
 
 function resizeGame() {
   isMobile = ('ontouchstart' in window) || window.matchMedia('(pointer:coarse)').matches;
-  const ctrlH = isMobile ? 130 : 0;
-  if(isMobile) controlsEl.style.display='flex';
-  else controlsEl.style.display='none';
-  const availW=window.innerWidth;
-  const availH=window.innerHeight-ctrlH;
-  const scale=Math.min(availW/W, availH/H, 1);
-  canvas.style.width  = Math.floor(W*scale)+'px';
-  canvas.style.height = Math.floor(H*scale)+'px';
+  const lsMob = isMobile && window.innerWidth > window.innerHeight;
+  document.body.classList.toggle('ls-mob', lsMob);
+
+  if(lsMob){
+    // Mobile paysage : plein écran, contrôles dans les coins
+    controlsEl.style.display='block';
+    const scale=Math.min(window.innerWidth/W, window.innerHeight/H);
+    canvas.style.width  = Math.floor(W*scale)+'px';
+    canvas.style.height = Math.floor(H*scale)+'px';
+  } else {
+    const ctrlH = isMobile ? 130 : 0;
+    controlsEl.style.display = isMobile ? 'flex' : 'none';
+    // Desktop : s'adapte à la fenêtre (95 % de l'espace dispo), pas de cap à 1×
+    const factor = isMobile ? 1 : 0.95;
+    const scale=Math.min(window.innerWidth/W, (window.innerHeight-ctrlH)/H)*factor;
+    canvas.style.width  = Math.floor(W*scale)+'px';
+    canvas.style.height = Math.floor(H*scale)+'px';
+  }
 }
 window.addEventListener('resize', resizeGame);
 resizeGame();

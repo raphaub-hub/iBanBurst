@@ -136,7 +136,8 @@ function resizeGame() {
   t.style.fontSize     = Math.round(12*scale)+'px';
   t.style.padding      = `${Math.round(5*scale)}px ${Math.round(15*scale)}px`;
   t.style.borderRadius = Math.round(8*scale)+'px';
-  t.style.top          = (canvasOffsetY + Math.round(50*scale))+'px';
+  const toastOffset = lsMob ? 28 : 50;
+  t.style.top          = (canvasOffsetY + Math.round(toastOffset*scale))+'px';
 }
 window.addEventListener('resize', resizeGame);
 resizeGame();

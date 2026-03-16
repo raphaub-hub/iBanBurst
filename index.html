@@ -509,9 +509,12 @@ btnLeft.addEventListener('touchmove',e=>{
   for(const t of e.changedTouches){
     if(t.identifier===moveTouchId){
       const dx=t.clientX-moveTouchStartX;
-      if(dx<-15){touchMoveDir=-1;btnLeft.classList.add('go-left');btnLeft.classList.remove('go-right');}
-      else if(dx>15){touchMoveDir=1;btnLeft.classList.add('go-right');btnLeft.classList.remove('go-left');}
-      else{touchMoveDir=0;btnLeft.classList.remove('go-left','go-right');}
+      if(dx<-12){touchMoveDir=-1;btnLeft.classList.add('go-left');btnLeft.classList.remove('go-right');}
+      else if(dx>12){touchMoveDir=1;btnLeft.classList.add('go-right');btnLeft.classList.remove('go-left');}
+      else{
+        touchMoveDir=0;btnLeft.classList.remove('go-left','go-right');
+        moveTouchStartX=t.clientX; // recale le centre là où est le doigt
+      }
     }
   }
 },{passive:false});
@@ -534,7 +537,8 @@ btnFire.addEventListener('touchstart',e=>{
   touchFiring=true;
   btnFire.classList.add('active');
   // Démarre le jeu si on est sur l'écran d'accueil / game over
-  if(G.phase==='start'||G.phase==='win'||G.phase==='lose') startGame();
+  if(G.phase==='start') startGame();
+  else if((G.phase==='win'||G.phase==='lose')&&G.canRestart) startGame();
 },{passive:false});
 btnFire.addEventListener('touchend',()=>{touchFiring=false;btnFire.classList.remove('active');});
 btnFire.addEventListener('touchcancel',()=>{touchFiring=false;btnFire.classList.remove('active');});
@@ -547,7 +551,7 @@ function reset(){
     pBullets:[],eBullets:[],enemies:[],
     boss:null,bossHP:BOSS_MAX_HP,bossDir:1,bossShootT:0,bossPulse:0,
     eDir:1,eStepT:0,eStepInt:52,eShootT:0,
-    invincible:0,startTime:null,endTime:null
+    invincible:0,startTime:null,endTime:null,canRestart:false
   };
   particles=[];confetti=[];shakeTimer=0;shootCD=0;
 }
@@ -582,7 +586,7 @@ document.addEventListener('keydown',e=>{
   if(e.code==='Space')e.preventDefault();
   if(e.code==='Space'||e.code==='Enter'){
     if(G.phase==='start')startGame();
-    else if(G.phase==='win'||G.phase==='lose')startGame();
+    else if((G.phase==='win'||G.phase==='lose')&&G.canRestart)startGame();
   }
 });
 document.addEventListener('keyup',e=>{keys[e.code]=false;});
@@ -724,8 +728,8 @@ function checkCollisions(){
   });
 }
 
-function triggerWin() {if(G.phase!=='win'){G.phase='win';G.endTime=Date.now();spawnConfetti();}}
-function triggerLose(){if(G.phase!=='lose'){G.phase='lose';G.endTime=Date.now();}}
+function triggerWin() {if(G.phase!=='win'){G.phase='win';G.endTime=Date.now();spawnConfetti();G.canRestart=false;setTimeout(()=>{G.canRestart=true;},3000);}}
+function triggerLose(){if(G.phase!=='lose'){G.phase='lose';G.endTime=Date.now();G.canRestart=false;setTimeout(()=>{G.canRestart=true;},3000);}}
 
 // ── SCREENS ──────────────────────────────────────────────────
 function drawStart(){
@@ -786,10 +790,15 @@ function drawWin(){
     ctx.fillText(`Temps : ${Math.floor((G.endTime-G.startTime)/1000)}s`,W/2,H/2+78);
   }
   const p=(Math.sin(Date.now()*0.0035)+1)/2;
-  ctx.fillStyle=`rgba(100,255,162,${0.4+0.6*p})`;
-  ctx.font='bold 14px Courier New';
-  const hint=isMobile?'[ 🔥 pour rejouer ]':'[ ESPACE pour rejouer — le marché FX ne dort jamais ]';
-  ctx.fillText(hint,W/2,H/2+118);
+  if(G.canRestart){
+    ctx.fillStyle=`rgba(100,255,162,${0.4+0.6*p})`;
+    ctx.font='bold 14px Courier New';
+    ctx.fillText(isMobile?'[ 🔥 pour rejouer ]':'[ ESPACE pour rejouer — le marché FX ne dort jamais ]',W/2,H/2+118);
+  } else {
+    ctx.fillStyle=`rgba(100,255,162,${0.2+0.15*p})`;
+    ctx.font='12px Courier New';
+    ctx.fillText('· · ·',W/2,H/2+118);
+  }
 }
 
 function drawLose(){
@@ -803,10 +812,15 @@ function drawLose(){
   ctx.fillStyle='#FFD700';ctx.font='bold 18px Courier New';
   ctx.fillText(`SCORE : ${G.score}`,W/2,H/2+68);
   const p=(Math.sin(Date.now()*0.004)+1)/2;
-  ctx.fillStyle=`rgba(255,68,68,${0.45+0.55*p})`;
-  ctx.font='bold 14px Courier New';
-  const hint=isMobile?'[ 🔥 pour réessayer ]':"[ ESPACE pour réessayer — la compliance n'attend pas ]";
-  ctx.fillText(hint,W/2,H/2+108);
+  if(G.canRestart){
+    ctx.fillStyle=`rgba(255,68,68,${0.45+0.55*p})`;
+    ctx.font='bold 14px Courier New';
+    ctx.fillText(isMobile?'[ 🔥 pour réessayer ]':"[ ESPACE pour réessayer — la compliance n'attend pas ]",W/2,H/2+108);
+  } else {
+    ctx.fillStyle=`rgba(255,68,68,${0.2+0.15*p})`;
+    ctx.font='12px Courier New';
+    ctx.fillText('· · ·',W/2,H/2+108);
+  }
 }
 
 function drawHUD(){

@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>iBanFirst Invaders</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#050510; display:flex; align-items:center; justify-content:center; height:100vh; overflow:hidden; }
+canvas { display:block; }
+#toast {
+  position:fixed; top:52px; left:50%; transform:translateX(-50%);
+  background:rgba(5,5,16,0.94); color:#64FFA2; border:1px solid #8F40FF;
+  padding:6px 16px; border-radius:8px; font-family:'Courier New',monospace;
+  font-size:11.5px; pointer-events:none; z-index:20; opacity:0;
+  transition:opacity 0.25s; max-width:540px; text-align:center; white-space:nowrap;
+}
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<div id="toast"></div>
+<script>
+// ── CONFIG ───────────────────────────────────────────────────
+const W=800, H=600;
+const EW=80, EH=30;        // enemy collision box
+const PW=90, PH=34;        // player
+const BW=210, BH=62;       // boss
+const BOSS_MAX_HP = 10;
+const ENEMY_MAX_HP = 2;
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = W; canvas.height = H;
+
+// ── AUDIO ────────────────────────────────────────────────────
+let _ac = null;
+function ac() { if(!_ac) _ac = new (window.AudioContext||window.webkitAudioContext)(); return _ac; }
+function beep(freq, dur, type='square', vol=0.1) {
+  try {
+    const a=ac(), o=a.createOscillator(), g=a.createGain();
+    o.connect(g); g.connect(a.destination);
+    o.type=type; o.frequency.value=freq;
+    g.gain.setValueAtTime(vol, a.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, a.currentTime+dur);
+    o.start(); o.stop(a.currentTime+dur);
+  } catch(e) {}
+}
+function boom() {
+  try {
+    const a=ac(), n=a.sampleRate*0.28, b=a.createBuffer(1,n,a.sampleRate);
+    const d=b.getChannelData(0);
+    for(let i=0;i<n;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/n,2);
+    const s=a.createBufferSource(), g=a.createGain();
+    g.gain.value=0.22; s.buffer=b; s.connect(g); g.connect(a.destination); s.start();
+  } catch(e) {}
+}
+
+// ── DRAW HELPERS ─────────────────────────────────────────────
+function rr(cx,x,y,w,h,r) {
+  cx.beginPath();
+  cx.moveTo(x+r,y); cx.lineTo(x+w-r,y); cx.arcTo(x+w,y,x+w,y+r,r);
+  cx.lineTo(x+w,y+h-r); cx.arcTo(x+w,y+h,x+w-r,y+h,r);
+  cx.lineTo(x+r,y+h); cx.arcTo(x,y+h,x,y+h-r,r);
+  cx.lineTo(x,y+r); cx.arcTo(x,y,x+r,y,r);
+  cx.closePath();
+}
+function pill(cx,x,y,w,h,fill,stroke,sw=1.5) {
+  rr(cx,x,y,w,h,6); cx.fillStyle=fill; cx.fill();
+  if(stroke){ cx.strokeStyle=stroke; cx.lineWidth=sw; cx.stroke(); }
+}
+function lbl(cx,t,x,y,col,sz,bold=false) {
+  cx.save(); cx.fillStyle=col;
+  cx.font=`${bold?'bold ':''}${sz}px 'Courier New',monospace`;
+  cx.textAlign='center'; cx.textBaseline='middle';
+  cx.fillText(t,x,y); cx.restore();
+}
+// 2 small HP dots drawn in bottom-right corner of capsule
+function hpDots(cx,x,y,w,h,hp,max=2) {
+  const ds=4, gap=3, tw=max*(ds+gap)-gap;
+  const sx=x+w-tw-3;
+  for(let i=0;i<max;i++) {
+    cx.fillStyle = i<hp ? '#64FFA2' : 'rgba(255,255,255,0.12)';
+    cx.fillRect(sx+i*(ds+gap), y+h-ds-2, ds, ds);
+  }
+}
+// Company name below ship
+function nameLbl(cx,name,x,y,w,h) {
+  lbl(cx, name, x+w/2, y+h+8, 'rgba(200,220,255,0.7)', 7.5);
+}
+// Red flash overlay on hit
+function flashOvl(cx,x,y,w,h,a) {
+  cx.save(); cx.globalAlpha=a; cx.fillStyle='#FF3333';
+  rr(cx,x,y,w,h,6); cx.fill(); cx.restore();
+}
+
+// ── LOGOS ────────────────────────────────────────────────────
+
+// iBanFirst — violet #8F40FF + cockpit vert #64FFA2 (PLAYER)
+function drawIBanFirst(cx,x,y,w,h) {
+  // Side wings
+  cx.fillStyle='#6B28CC';
+  cx.beginPath(); cx.moveTo(x,y+h); cx.lineTo(x+14,y+h-8); cx.lineTo(x+14,y+h); cx.closePath(); cx.fill();
+  cx.beginPath(); cx.moveTo(x+w,y+h); cx.lineTo(x+w-14,y+h-8); cx.lineTo(x+w-14,y+h); cx.closePath(); cx.fill();
+  // Body
+  pill(cx, x+8, y+4, w-16, h-4, '#8F40FF', '#64FFA2', 1.5);
+  // Green cockpit tip
+  cx.fillStyle='#64FFA2';
+  cx.beginPath(); cx.moveTo(x+w/2,y); cx.lineTo(x+w/2-9,y+7); cx.lineTo(x+w/2+9,y+7); cx.closePath(); cx.fill();
+  // Green bottom bar
+  cx.fillStyle='rgba(100,255,162,0.5)';
+  cx.fillRect(x+12, y+h-3, w-24, 2);
+  // Text
+  lbl(cx,'iBanFirst',x+w/2,y+h/2+2,'#FFFFFF',11,true);
+}
+
+// Ebury — dark cyan #006B8F + cyan "E" iconmark
+// Ebury's real brand color is a turquoise/cyan ~#00BEF0
+function drawEbury(cx,x,y,w,h,hp) {
+  pill(cx,x,y,w,h,'#005F80',null);
+  // "E" lettermark (3 bars + vertical) in bright cyan
+  cx.fillStyle='#00BEF0';
+  cx.fillRect(x+5,y+4,3,h-8);             // vertical
+  cx.fillRect(x+5,y+4,13,3);              // top bar
+  cx.fillRect(x+5,y+h/2-1,11,3);          // mid bar
+  cx.fillRect(x+5,y+h-7,13,3);            // bot bar
+  lbl(cx,'Ebury',x+w/2+10,y+h/2,'#FFFFFF',10,true);
+  hpDots(cx,x,y,w,h,hp);
+}
+
+// Wise — vert lime #9FE870 + Fast Flag (3 diagonal stripes)
+function drawWise(cx,x,y,w,h,hp) {
+  pill(cx,x,y,w,h,'#9FE870',null);
+  // Flag background area
+  cx.fillStyle='#7BC44F';
+  cx.beginPath();
+  cx.moveTo(x+4,y+3); cx.lineTo(x+21,y+3); cx.lineTo(x+19,y+h-3); cx.lineTo(x+4,y+h-3);
+  cx.closePath(); cx.fill();
+  // 3 diagonal stripes (bottom-left to top-right) in forest green #163300
+  cx.fillStyle='#163300';
+  // stripe 1
+  cx.beginPath(); cx.moveTo(x+5,y+h-4); cx.lineTo(x+8,y+h-4); cx.lineTo(x+18,y+4); cx.lineTo(x+15,y+4); cx.closePath(); cx.fill();
+  // stripe 2
+  cx.beginPath(); cx.moveTo(x+10,y+h-4); cx.lineTo(x+13,y+h-4); cx.lineTo(x+20,y+7); cx.lineTo(x+17,y+7); cx.closePath(); cx.fill();
+  // stripe 3
+  cx.beginPath(); cx.moveTo(x+15,y+h-4); cx.lineTo(x+17,y+h-4); cx.lineTo(x+21,y+10); cx.lineTo(x+18,y+10); cx.closePath(); cx.fill();
+  lbl(cx,'Wise',x+w/2+11,y+h/2,'#163300',11,true);
+  hpDots(cx,x,y,w,h,hp);
+}
+
+// Airwallex — quasi-noir #1A1D21 + bordure violet + "A" géométrique
+function drawAirwallex(cx,x,y,w,h,hp) {
+  pill(cx,x,y,w,h,'#1A1D21','#612FFF');
+  // Angular "A" mark (two diagonal lines meeting at top + crossbar)
+  cx.save(); cx.strokeStyle='#612FFF'; cx.lineWidth=2.5; cx.lineCap='round';
+  cx.beginPath(); cx.moveTo(x+5,y+h-4); cx.lineTo(x+15,y+4); cx.lineTo(x+24,y+h-4); cx.stroke();
+  cx.beginPath(); cx.moveTo(x+9,y+h/2+2); cx.lineTo(x+20,y+h/2+2); cx.stroke();
+  cx.restore();
+  lbl(cx,'Airwallex',x+w/2+11,y+h/2,'#FFFFFF',9,true);
+  hpDots(cx,x,y,w,h,hp);
+}
+
+// Convera — navy #001E37 + arc mint + gradient bar
+// (ex-Western Union Business Solutions) — navy+mint identity
+function drawConvera(cx,x,y,w,h,hp) {
+  pill(cx,x,y,w,h,'#001E37',null);
+  // Open arc mark in mint
+  cx.save(); cx.strokeStyle='#00C7B3'; cx.lineWidth=2.5;
+  cx.beginPath(); cx.arc(x+13,y+h/2,7,Math.PI*0.15,Math.PI*1.85); cx.stroke();
+  // Purple end dot
+  cx.fillStyle='#9383F2'; cx.beginPath(); cx.arc(x+20,y+h/2,2.5,0,Math.PI*2); cx.fill();
+  cx.restore();
+  // Gradient bar
+  const g=cx.createLinearGradient(x+4,0,x+w-4,0);
+  g.addColorStop(0,'#00C7B3'); g.addColorStop(1,'#9383F2');
+  cx.fillStyle=g; cx.fillRect(x+4,y+h-4,w-8,2);
+  lbl(cx,'Convera',x+w/2+11,y+h/2,'#FFFFFF',10,true);
+  hpDots(cx,x,y,w,h,hp);
+}
+
+// Revolut — noir + "R" ouvert géométrique blanc
+// Le "R" Revolut a une jambe ouverte/diagonale — signature de la marque
+function drawRevolut(cx,x,y,w,h,hp) {
+  pill(cx,x,y,w,h,'#111111','#333333');
+  cx.save();
+  // Vertical stem
+  cx.fillStyle='#FFFFFF'; cx.fillRect(x+5,y+4,4,h-8);
+  // Bowl (D-shape arc)
+  cx.beginPath();
+  cx.moveTo(x+9,y+4); cx.lineTo(x+13,y+4);
+  cx.arc(x+13,y+4+5,5,-Math.PI/2,Math.PI/2);
+  cx.lineTo(x+9,y+14); cx.closePath(); cx.fill();
+  // Open diagonal leg — the Revolut signature
+  cx.strokeStyle='#FFFFFF'; cx.lineWidth=3.5; cx.lineCap='round';
+  cx.beginPath(); cx.moveTo(x+10,y+h/2+2); cx.lineTo(x+22,y+h-4); cx.stroke();
+  cx.restore();
+  lbl(cx,'Revolut',x+w/2+10,y+h/2,'#FFFFFF',10,true);
+  hpDots(cx,x,y,w,h,hp);
+}
+
+// Payoneer — orange #FF4800 + "P" avec bras-checkmark (le "Y" signature)
+function drawPayoneer(cx,x,y,w,h,hp) {
+  pill(cx,x,y,w,h,'#E03800',null);
+  cx.save();
+  // P stem
+  cx.fillStyle='#FFFFFF'; cx.fillRect(x+5,y+3,3.5,h-6);
+  // P bowl
+  cx.beginPath();
+  cx.moveTo(x+8.5,y+4); cx.lineTo(x+12,y+4);
+  cx.arc(x+12,y+4+5,5,-Math.PI/2,Math.PI/2);
+  cx.lineTo(x+8.5,y+14); cx.closePath(); cx.fill();
+  // Sweeping checkmark arm (signature Payoneer — le Y qui déborde)
+  cx.strokeStyle='#FFFFFF'; cx.lineWidth=2.5; cx.lineCap='round';
+  cx.beginPath();
+  cx.moveTo(x+8.5,y+h/2+3);
+  cx.quadraticCurveTo(x+15,y+h+3,x+23,y+h-5);
+  cx.stroke();
+  cx.restore();
+  lbl(cx,'Payoneer',x+w/2+10,y+h/2,'#FFFFFF',9,true);
+  hpDots(cx,x,y,w,h,hp);
+}
+
+// Amnis — bleu #0072B5 + 3 vagues horizontales
+function drawAmnis(cx,x,y,w,h,hp) {
+  pill(cx,x,y,w,h,'#005A91',null);
+  cx.save(); cx.strokeStyle='#00AEEF'; cx.lineWidth=2; cx.lineCap='round';
+  for(let i=0;i<3;i++) {
+    const wy = y+6+i*((h-12)/2);
+    cx.beginPath(); cx.moveTo(x+4,wy);
+    cx.quadraticCurveTo(x+8,wy-4,x+12,wy);
+    cx.quadraticCurveTo(x+16,wy+4,x+21,wy);
+    cx.stroke();
+  }
+  cx.restore();
+  lbl(cx,'Amnis',x+w/2+11,y+h/2,'#FFFFFF',11,true);
+  hpDots(cx,x,y,w,h,hp);
+}
+
+// Nium — navy #0B0E58 + 4 cercles 2×2 (connectivité globale)
+function drawNium(cx,x,y,w,h,hp) {
+  pill(cx,x,y,w,h,'#0B0E58',null);
+  cx.fillStyle='#FFFFFF';
+  const r=3.5, gap=9;
+  [[0,0],[1,0],[0,1],[1,1]].forEach(([c,row])=>{
+    cx.beginPath();
+    cx.arc(x+9+c*gap, y+h/2-gap/2+row*gap, r, 0, Math.PI*2);
+    cx.fill();
+  });
+  lbl(cx,'Nium',x+w/2+9,y+h/2,'#FFFFFF',11,true);
+  hpDots(cx,x,y,w,h,hp);
+}
+
+// Verto — teal #359EB4 + V chevron corail
+function drawVerto(cx,x,y,w,h,hp) {
+  pill(cx,x,y,w,h,'#2A7E90',null);
+  cx.save(); cx.strokeStyle='#EA566E'; cx.lineWidth=3.5; cx.lineJoin='round'; cx.lineCap='round';
+  cx.beginPath(); cx.moveTo(x+5,y+4); cx.lineTo(x+13,y+h-4); cx.lineTo(x+22,y+4); cx.stroke();
+  cx.restore();
+  lbl(cx,'Verto',x+w/2+9,y+h/2,'#FFFFFF',11,true);
+  hpDots(cx,x,y,w,h,hp);
+}
+
+// Kantox BOSS — bleu #007ACC + "K" + flèches FX + barre 10 HP
+function drawKantox(cx,x,y,w,h,hp,pulse) {
+  // Outer glow
+  cx.save(); cx.shadowBlur=22*pulse; cx.shadowColor='#2496FF';
+  pill(cx,x,y,w,h,'#005A99','#007ACC',2); cx.restore();
+  // Pulsing border
+  cx.save();
+  cx.strokeStyle=`rgba(36,150,255,${0.3+0.7*pulse})`; cx.lineWidth=3.5;
+  rr(cx,x-4,y-4,w+8,h+8,10); cx.stroke(); cx.restore();
+
+  // "K" lettermark
+  cx.save();
+  const vx=x+14, vy=y+10, vh=h-20;
+  cx.fillStyle='#FFFFFF'; cx.fillRect(vx,vy,5,vh);   // vertical bar
+  cx.strokeStyle='#FFFFFF'; cx.lineWidth=4.5; cx.lineCap='round';
+  cx.beginPath(); cx.moveTo(vx+3,vy+vh/2); cx.lineTo(vx+18,vy); cx.stroke();
+  cx.beginPath(); cx.moveTo(vx+3,vy+vh/2); cx.lineTo(vx+18,vy+vh); cx.stroke();
+  cx.restore();
+
+  // FX exchange arrows (currency symbol — Kantox = currency management)
+  cx.save(); cx.strokeStyle='#64FFA2'; cx.fillStyle='#64FFA2'; cx.lineWidth=2;
+  // Arrow right (top)
+  cx.beginPath(); cx.moveTo(x+40,y+h/2-9); cx.lineTo(x+54,y+h/2-9); cx.stroke();
+  cx.beginPath(); cx.moveTo(x+54,y+h/2-13); cx.lineTo(x+60,y+h/2-9); cx.lineTo(x+54,y+h/2-5); cx.fill();
+  // Arrow left (bottom)
+  cx.beginPath(); cx.moveTo(x+60,y+h/2+9); cx.lineTo(x+46,y+h/2+9); cx.stroke();
+  cx.beginPath(); cx.moveTo(x+46,y+h/2+5); cx.lineTo(x+40,y+h/2+9); cx.lineTo(x+46,y+h/2+13); cx.fill();
+  cx.restore();
+
+  // "KANTOX" wordmark
+  lbl(cx,'KANTOX',x+w/2+30,y+h/2,'#FFFFFF',17,true);
+
+  // HP bar (10 segments) above boss
+  const sw=(w-24)/BOSS_MAX_HP-2;
+  for(let i=0;i<BOSS_MAX_HP;i++) {
+    const ratio=hp/BOSS_MAX_HP;
+    const col = ratio>0.6?'#64FFA2': ratio>0.3?'#FFD700':'#FF4444';
+    ctx.fillStyle = i<hp ? col : 'rgba(255,255,255,0.07)';
+    ctx.fillRect(x+12+i*(sw+2), y-16, sw, 8);
+    ctx.strokeStyle='rgba(255,255,255,0.12)'; ctx.lineWidth=0.5;
+    ctx.strokeRect(x+12+i*(sw+2), y-16, sw, 8);
+  }
+  lbl(cx,`${hp}/${BOSS_MAX_HP} HP`, x+w/2, y-26, '#FFD700', 9, true);
+}
+
+// ── PARTICLES ────────────────────────────────────────────────
+let particles=[];
+let shakeTimer=0;
+function spark(x,y,col,n=14) {
+  for(let i=0;i<n;i++) {
+    const a=Math.PI*2*i/n+Math.random()*0.5, s=1.5+Math.random()*3.5;
+    particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,
+      life:1,decay:0.022+Math.random()*0.03,col,sz:1.5+Math.random()*3});
+  }
+}
+// Currency FX — pièces, symboles monétaires, billets
+const CURRENCIES=['$','€','£','¥','₿','₽','CHF'];
+function fxSpark(x,y,n=10) {
+  for(let i=0;i<n;i++) {
+    const a=Math.PI*2*i/n+Math.random()*0.5, s=1.5+Math.random()*4;
+    particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-2,
+      life:1,decay:0.010+Math.random()*0.012,col:'#FFD700',
+      sz:7+Math.random()*6,
+      type:'symbol',
+      sym:CURRENCIES[Math.floor(Math.random()*CURRENCIES.length)],
+      rot:Math.random()*Math.PI*2,rotV:(Math.random()-0.5)*0.25});
+  }
+}
+// Score pop-up flottant
+function scorePop(x,y,text,col='#FFD700') {
+  particles.push({x,y,vx:(Math.random()-0.5)*1.2,vy:-2.2,
+    life:1,decay:0.02,col,sz:13,type:'score',text});
+}
+function tickPart() {
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vy+=0.05;p.life-=p.decay;
+    if(p.rot!==undefined) p.rot+=p.rotV||0;});
+}
+function drawPart() {
+  particles.forEach(p=>{
+    ctx.save(); ctx.globalAlpha=p.life;
+    if(p.type==='coin') {
+      // Pièce dorée avec symbole monétaire
+      ctx.fillStyle='#FFD700'; ctx.strokeStyle='#B8860B'; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.sz,0,Math.PI*2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle='rgba(70,35,0,0.9)';
+      ctx.font=`bold ${Math.max(6,Math.floor(p.sz*1.1))}px sans-serif`;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(p.sym||'$',p.x,p.y);
+    } else if(p.type==='bill') {
+      // Billet de banque
+      ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.rot||0);
+      ctx.fillStyle='#2E7D32'; ctx.fillRect(-p.sz,-p.sz*0.5,p.sz*2,p.sz);
+      ctx.fillStyle='rgba(255,255,255,0.2)'; ctx.fillRect(-p.sz+2,-p.sz*0.5+2,p.sz*2-4,p.sz-4);
+      ctx.restore();
+    } else if(p.type==='symbol') {
+      // Symbole monétaire flottant
+      ctx.fillStyle=p.col||'#FFD700';
+      ctx.font=`bold ${Math.floor(p.sz*1.6)}px sans-serif`;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(p.sym,p.x,p.y);
+    } else if(p.type==='score') {
+      // Score flottant
+      ctx.fillStyle=p.col||'#FFD700';
+      ctx.font=`bold ${p.sz}px 'Courier New',monospace`;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(p.text,p.x,p.y);
+    } else {
+      ctx.fillStyle=p.col;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.sz,0,Math.PI*2); ctx.fill();
+    }
+    ctx.restore();
+  });
+}
+
+// ── STARS ────────────────────────────────────────────────────
+const STARS=Array.from({length:130},()=>({
+  x:Math.random()*W,y:Math.random()*H,sp:0.1+Math.random()*0.4,r:Math.random()*1.5,op:0.3+Math.random()*0.7
+}));
+function drawStars() {
+  STARS.forEach(s=>{
+    s.y+=s.sp; if(s.y>H){s.y=0;s.x=Math.random()*W;}
+    ctx.save(); ctx.globalAlpha=s.op; ctx.fillStyle='#FFF';
+    ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.fill(); ctx.restore();
+  });
+}
+
+// ── CONFETTI ─────────────────────────────────────────────────
+let confetti=[];
+function spawnConfetti() {
+  const cols=['#8F40FF','#64FFA2','#FFF','#FFD700','#FF4800','#00BEF0','#9FE870'];
+  confetti=Array.from({length:130},()=>({
+    x:Math.random()*W,y:-30-Math.random()*80,
+    vx:(Math.random()-0.5)*3,vy:1.5+Math.random()*3,
+    col:cols[Math.floor(Math.random()*cols.length)],
+    sz:3+Math.random()*6,rot:Math.random()*Math.PI*2,rotV:(Math.random()-0.5)*0.2
+  }));
+}
+function tickConf() {
+  confetti.forEach(c=>{c.x+=c.vx;c.y+=c.vy;c.rot+=c.rotV;if(c.y>H+20){c.y=-20;c.x=Math.random()*W;}});
+}
+function drawConf() {
+  confetti.forEach(c=>{
+    ctx.save(); ctx.translate(c.x,c.y); ctx.rotate(c.rot);
+    ctx.fillStyle=c.col; ctx.fillRect(-c.sz/2,-c.sz/4,c.sz,c.sz/2); ctx.restore();
+  });
+}
+
+// ── TOAST ────────────────────────────────────────────────────
+const toastEl=document.getElementById('toast');
+let toastTid=null;
+function toast(msg) {
+  if(toastTid) clearTimeout(toastTid);
+  toastEl.textContent=msg; toastEl.style.opacity='1';
+  toastTid=setTimeout(()=>{toastEl.style.opacity='0';},2700);
+}
+const MSGS={
+  ebury:    "Ebury neutralisé ! Retourne gérer ton risque de change en Angleterre !",
+  wise:     "Wise éliminé ! Les frais réduits n'ont pas payé le bouclier.",
+  airwallex:"Airwallex au sol ! L'envol s'est terminé en crash landing.",
+  convera:  "Convera coulé ! Western Union Business Solutions, c'était mieux finalement...",
+  revolut:  "Revolut détruit ! La néobanque a ses limites. Surtout face à iBanFirst.",
+  payoneer: "Payoneer hors-ligne ! Le paiement n'est pas passé. Dommage.",
+  amnis:    "Amnis asséché ! La vague s'est retournée contre eux.",
+  nium:     "Nium désintégré ! L'infrastructure est tombée. Support non disponible.",
+  verto:    "Verto retourné ! La plateforme cross-border est hors-service.",
+  kantox:   "☠ KANTOX ANNIHILÉ ! iBanFirst règne sur le FX mondial !!!",
+};
+const LOGO_COL={
+  ebury:'#00BEF0',wise:'#9FE870',airwallex:'#612FFF',convera:'#00C7B3',
+  revolut:'#CCCCCC',payoneer:'#FF4800',amnis:'#00AEEF',nium:'#AAAAFF',verto:'#EA566E'
+};
+
+// ── STATE ────────────────────────────────────────────────────
+const DRAW={
+  ebury:drawEbury,wise:drawWise,airwallex:drawAirwallex,convera:drawConvera,
+  revolut:drawRevolut,payoneer:drawPayoneer,amnis:drawAmnis,nium:drawNium,verto:drawVerto
+};
+const NAMES={
+  ebury:'Ebury',wise:'Wise Business',airwallex:'Airwallex',convera:'Convera',
+  revolut:'Revolut Biz',payoneer:'Payoneer',amnis:'Amnis',nium:'Nium',verto:'Verto'
+};
+const W1=['ebury','wise','airwallex','convera','revolut'];
+const W2=['payoneer','amnis','nium','verto','ebury','wise','airwallex','convera','revolut','payoneer'];
+
+let G={};
+let shootCD=0;
+const keys={};
+
+function reset() {
+  G={
+    phase:'start', score:0, lives:5, wave:1,
+    player:{x:W/2-PW/2,y:H-60},
+    pBullets:[],eBullets:[],enemies:[],
+    boss:null,bossHP:BOSS_MAX_HP,bossDir:1,bossShootT:0,bossPulse:0,
+    eDir:1,eStepT:0,eStepInt:52,eShootT:0,
+    invincible:0,startTime:null,endTime:null
+  };
+  particles=[]; confetti=[]; shakeTimer=0; shootCD=0;
+}
+
+function makeEnemies(waveNum) {
+  const types=waveNum===1?W1:W2;
+  const cols=5, rows=waveNum===1?2:4;
+  const gapX=16, gapY=46;  // gapY large enough for name label below
+  const startX=(W-cols*(EW+gapX))/2;
+  const startY=72;
+  G.enemies=[];
+  for(let r=0;r<rows;r++)
+    for(let c=0;c<cols;c++) {
+      const ey=startY+r*(EH+gapY);
+      G.enemies.push({
+        type:types[(r*cols+c)%types.length],
+        x:startX+c*(EW+gapX), y:ey-280-r*55,
+        targetY:ey,
+        alive:true, hp:ENEMY_MAX_HP, flash:0
+      });
+    }
+  G.eDir=1; G.eStepT=0;
+  G.eStepInt=waveNum===1?52:36;
+}
+
+function startGame() {
+  reset(); G.phase='wave1'; G.startTime=Date.now(); makeEnemies(1);
+}
+
+// ── INPUT ────────────────────────────────────────────────────
+document.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(e.code==='Space') e.preventDefault();
+  if(e.code==='Space'||e.code==='Enter') {
+    if(G.phase==='start') startGame();
+    else if(G.phase==='win'||G.phase==='lose') startGame();
+  }
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+// ── LOGIC ────────────────────────────────────────────────────
+function updatePlayer() {
+  const p=G.player;
+  if((keys['ArrowLeft']||keys['KeyA'])&&p.x>0) p.x-=5;
+  if((keys['ArrowRight']||keys['KeyD'])&&p.x+PW<W) p.x+=5;
+  if(shootCD>0) shootCD--;
+  if(keys['Space']&&shootCD===0) {
+    G.pBullets.push({x:p.x+PW/2-1,y:p.y-14});
+    shootCD=11; beep(900,0.07,'square',0.08);
+  }
+  if(G.invincible>0) G.invincible--;
+}
+
+function updateBullets() {
+  G.pBullets=G.pBullets.filter(b=>{b.y-=9;return b.y+14>0;});
+  G.eBullets=G.eBullets.filter(b=>{
+    b.x+=(b.vx||0); b.y+=(b.vy||5);
+    return b.y<H&&b.x>-10&&b.x<W+10;
+  });
+}
+
+function updateEnemies() {
+  const alive=G.enemies.filter(e=>e.alive);
+  if(!alive.length) {
+    if(G.phase==='wave1') {
+      G.phase='wave2'; G.wave=2; makeEnemies(2);
+      setTimeout(()=>toast("🚨 Vague 2 ! Les renforts sont là !"),400);
+    } else if(G.phase==='wave2') {
+      G.phase='boss'; spawnBoss();
+    }
+    return;
+  }
+  alive.forEach(e=>{if(e.flash>0) e.flash--;});
+  // ── Animation d'entrée : les ennemis glissent depuis le haut, rangée par rangée
+  const entering=alive.filter(e=>e.y<e.targetY);
+  if(entering.length) {
+    entering.forEach(e=>{ e.y=Math.min(e.y+7, e.targetY); });
+    return;  // pas de tirs ni mouvement lateral pendant l'entrée
+  }
+  G.eStepT++;
+  const ratio=alive.length/G.enemies.length;
+  const interval=Math.max(7,Math.round(G.eStepInt*ratio));
+  if(G.eStepT>=interval) {
+    G.eStepT=0; let wall=false;
+    alive.forEach(e=>{e.x+=G.eDir*9; if(e.x<=2||e.x+EW>=W-2) wall=true;});
+    if(wall){G.eDir*=-1; alive.forEach(e=>e.y+=20);}
+  }
+  if(alive.some(e=>e.y+EH>=G.player.y)) triggerLose();
+  G.eShootT++;
+  if(G.eShootT>28){
+    G.eShootT=0;
+    if(Math.random()<0.60){
+      const s=alive[Math.floor(Math.random()*alive.length)];
+      G.eBullets.push({x:s.x+EW/2,y:s.y+EH,vy:5});
+    }
+  }
+}
+
+function spawnBoss() {
+  G.boss={x:W/2-BW/2,y:85};
+  G.bossHP=BOSS_MAX_HP; G.bossDir=1; G.bossShootT=0;
+  toast("⚡ BOSS FINAL : KANTOX vous défie !");
+}
+
+function updateBoss() {
+  if(!G.boss) return;
+  G.bossPulse=(Math.sin(Date.now()*0.006)+1)/2;
+  const sp=G.bossHP<=3?5:G.bossHP<=6?3.5:2.5;
+  G.boss.x+=G.bossDir*sp;
+  if(G.boss.x<=10||G.boss.x+BW>=W-10) G.bossDir*=-1;
+  G.bossShootT++;
+  const iv=G.bossHP<=3?18:G.bossHP<=6?28:44;
+  if(G.bossShootT>=iv){
+    G.bossShootT=0;
+    const cx2=G.boss.x+BW/2, cy2=G.boss.y+BH;
+    G.eBullets.push({x:cx2-6,y:cy2,vx:-1.8,vy:5});
+    G.eBullets.push({x:cx2+6,y:cy2,vx:1.8,vy:5});
+    if(G.bossHP<=6) G.eBullets.push({x:cx2,y:cy2,vx:0,vy:6});
+    // ≤3 HP : tirs plus rapides mais pas plus de balles (déjà 3)
+  }
+}
+
+function ov(ax,ay,aw,ah,bx,by,bw,bh){return ax<bx+bw&&ax+aw>bx&&ay<by+bh&&ay+ah>by;}
+
+function checkCollisions() {
+  G.pBullets=G.pBullets.filter(b=>{
+    let hit=false;
+    for(const e of G.enemies) {
+      if(!e.alive||hit) continue;
+      if(ov(b.x,b.y,3,14,e.x,e.y,EW,EH)) {
+        e.hp--;
+        if(e.hp<=0) {
+          e.alive=false; G.score+=100;
+          spark(e.x+EW/2,e.y+EH/2,LOGO_COL[e.type]||'#FFD700',14);
+          fxSpark(e.x+EW/2,e.y+EH/2,8);
+          scorePop(e.x+EW/2,e.y-4,'+100');
+          boom(); toast(MSGS[e.type]);
+        } else {
+          e.flash=18;
+          spark(e.x+EW/2,e.y+EH/2,'#FF4444',6);
+          beep(280,0.1,'square',0.07);
+          G.score+=20;
+        }
+        hit=true;
+      }
+    }
+    if(!hit&&G.boss&&ov(b.x,b.y,3,14,G.boss.x,G.boss.y,BW,BH)) {
+      G.bossHP--; hit=true; G.score+=80;
+      spark(G.boss.x+BW/2,G.boss.y+BH/2,'#2496FF',18);
+      if(Math.random()<0.65) fxSpark(G.boss.x+BW/2,G.boss.y+BH/2,5);
+      scorePop(G.boss.x+BW/2,G.boss.y,'+ 80','#00AEEF');
+      beep(160,0.3,'sawtooth',0.15);
+      if(G.bossHP<=0) {
+        const bx=G.boss.x+BW/2, by=G.boss.y+BH/2;
+        for(let i=0;i<8;i++) setTimeout(()=>{
+          spark(bx+(Math.random()-0.5)*160,by+(Math.random()-0.5)*90,'#FFD700',40);
+          fxSpark(bx+(Math.random()-0.5)*180,by+(Math.random()-0.5)*110,18);
+        },i*140);
+        scorePop(bx,by-30,'+ 2000','#FFD700');
+        toast(MSGS.kantox); G.boss=null; G.score+=2000;
+        setTimeout(triggerWin,1200);
+      }
+    }
+    return !hit;
+  });
+  if(G.invincible>0) return;
+  G.eBullets=G.eBullets.filter(b=>{
+    if(ov(b.x,b.y,3,10,G.player.x,G.player.y,PW,PH)) {
+      G.lives--; shakeTimer=14;
+      beep(90,0.4,'square',0.18);
+      spark(G.player.x+PW/2,G.player.y+PH/2,'#8F40FF',12);
+      G.invincible=90;
+      if(G.lives<=0) triggerLose();
+      return false;
+    }
+    return true;
+  });
+}
+
+function triggerWin()  { if(G.phase!=='win') {G.phase='win'; G.endTime=Date.now(); spawnConfetti();} }
+function triggerLose() { if(G.phase!=='lose'){G.phase='lose';G.endTime=Date.now();} }
+
+// ── SCREENS ──────────────────────────────────────────────────
+function drawStart() {
+  ctx.fillStyle='rgba(5,5,16,0.82)'; ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+  ctx.fillStyle='#8F40FF'; ctx.font='bold 46px Courier New'; ctx.fillText('iBanFirst',W/2,H/2-110);
+  ctx.fillStyle='#64FFA2'; ctx.font='bold 28px Courier New'; ctx.fillText('I N V A D E R S',W/2,H/2-68);
+  ctx.fillStyle='#CCC'; ctx.font='13px Courier New';
+  ctx.fillText('Dégommez la concurrence fintech. Sauvez le marché FX mondial.',W/2,H/2-16);
+  ctx.fillStyle='#AE85E9'; ctx.font='12px Courier New';
+  ctx.fillText('← → ou A/D  |  ESPACE pour tirer  |  2 HP par ennemi  |  10 HP pour le boss',W/2,H/2+10);
+  const p=(Math.sin(Date.now()*0.003)+1)/2;
+  ctx.fillStyle=`rgba(100,255,162,${0.45+0.55*p})`;
+  ctx.font='bold 16px Courier New';
+  ctx.fillText('[ ESPACE POUR COMMENCER ]',W/2,H/2+55);
+  // Demo row
+  const demo=['ebury','wise','airwallex','convera','revolut'];
+  demo.forEach((t,i)=>{
+    const dx=W/2-demo.length*48/2+i*48;
+    DRAW[t](ctx,dx,H/2+100,EW,EH,2);
+    nameLbl(ctx,NAMES[t],dx,H/2+100,EW,EH);
+  });
+}
+
+function drawWin() {
+  ctx.fillStyle='rgba(5,5,16,0.87)'; ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+  ctx.fillStyle='#64FFA2'; ctx.font='bold 28px Courier New';
+  ctx.fillText('🏆  iBanFirst CONQUIERT LE MARCHÉ !',W/2,H/2-100);
+  const lines=[
+    'Kantox a été renvoyé gérer ses algos tout seul dans le noir.',
+    'Vous avez simplifié les paiements internationaux...',
+    '...et éliminé toute la concurrence fintech mondiale.',
+  ];
+  ctx.fillStyle='#FFFFFF'; ctx.font='13px Courier New';
+  lines.forEach((l,i)=>ctx.fillText(l,W/2,H/2-35+i*24));
+  ctx.fillStyle='#FFD700'; ctx.font='bold 20px Courier New';
+  ctx.fillText(`SCORE FINAL : ${G.score}`,W/2,H/2+52);
+  if(G.startTime&&G.endTime) {
+    ctx.fillStyle='#AE85E9'; ctx.font='13px Courier New';
+    ctx.fillText(`Temps : ${Math.floor((G.endTime-G.startTime)/1000)}s`,W/2,H/2+78);
+  }
+  const p=(Math.sin(Date.now()*0.0035)+1)/2;
+  ctx.fillStyle=`rgba(100,255,162,${0.4+0.6*p})`;
+  ctx.font='bold 14px Courier New';
+  ctx.fillText('[ ESPACE pour rejouer — le marché FX ne dort jamais ]',W/2,H/2+118);
+}
+
+function drawLose() {
+  ctx.fillStyle='rgba(5,5,16,0.9)'; ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+  ctx.fillStyle='#FF4444'; ctx.font='bold 26px Courier New';
+  ctx.fillText('💀  Les concurrents ont pris le dessus...',W/2,H/2-90);
+  const lines=['Kantox danse sur votre tombe.','Mais iBanFirst revient toujours —','comme les virements SWIFT à 3h du matin.'];
+  ctx.fillStyle='#CCC'; ctx.font='13px Courier New';
+  lines.forEach((l,i)=>ctx.fillText(l,W/2,H/2-10+i*24));
+  ctx.fillStyle='#FFD700'; ctx.font='bold 18px Courier New';
+  ctx.fillText(`SCORE : ${G.score}`,W/2,H/2+68);
+  const p=(Math.sin(Date.now()*0.004)+1)/2;
+  ctx.fillStyle=`rgba(255,68,68,${0.45+0.55*p})`;
+  ctx.font='bold 14px Courier New';
+  ctx.fillText("[ ESPACE pour réessayer — la compliance n'attend pas ]",W/2,H/2+108);
+}
+
+function drawHUD() {
+  for(let i=0;i<G.lives;i++) drawIBanFirst(ctx,8+i*36,8,32,14);
+  ctx.save(); ctx.fillStyle='#8F40FF'; ctx.font='bold 15px Courier New';
+  ctx.textAlign='right'; ctx.fillText(`SCORE: ${G.score}`,W-10,24); ctx.restore();
+  ctx.save(); ctx.fillStyle='#64FFA2'; ctx.font='12px Courier New'; ctx.textAlign='center';
+  ctx.fillText(G.phase==='boss'?'⚡ BOSS FINAL ⚡':`VAGUE ${G.wave}/2`,W/2,22); ctx.restore();
+}
+
+// ── GAME LOOP ────────────────────────────────────────────────
+reset();
+
+function loop() {
+  requestAnimationFrame(loop);
+  let ox=0,oy=0;
+  if(shakeTimer>0){ox=(Math.random()-0.5)*shakeTimer*0.9;oy=(Math.random()-0.5)*shakeTimer*0.9;shakeTimer--;}
+  ctx.save(); ctx.translate(ox,oy);
+  ctx.fillStyle='#050510'; ctx.fillRect(-10,-10,W+20,H+20);
+  drawStars();
+
+  if(G.phase==='start'){drawStart();ctx.restore();return;}
+  if(G.phase==='win'){tickConf();drawConf();drawWin();ctx.restore();return;}
+  if(G.phase==='lose'){drawLose();ctx.restore();return;}
+
+  updatePlayer(); updateBullets();
+  if(G.phase==='wave1'||G.phase==='wave2') updateEnemies();
+  if(G.phase==='boss') updateBoss();
+  tickPart(); checkCollisions();
+
+  // Enemies
+  G.enemies.forEach(e=>{
+    if(!e.alive) return;
+    DRAW[e.type](ctx,e.x,e.y,EW,EH,e.hp);
+    nameLbl(ctx,NAMES[e.type],e.x,e.y,EW,EH);
+    if(e.flash>0&&Math.floor(e.flash/3)%2===0) flashOvl(ctx,e.x,e.y,EW,EH,0.55);
+  });
+
+  // Boss
+  if(G.boss) {
+    drawKantox(ctx,G.boss.x,G.boss.y,BW,BH,G.bossHP,G.bossPulse);
+    const p=(Math.sin(Date.now()*0.005)+1)/2;
+    ctx.save(); ctx.fillStyle=`rgba(36,150,255,${0.5+0.5*p})`;
+    ctx.font='bold 11px Courier New'; ctx.textAlign='center';
+    ctx.fillText('☠  BOSS FINAL  ☠',G.boss.x+BW/2,G.boss.y-36); ctx.restore();
+  }
+
+  // Player
+  if(G.invincible===0||Math.floor(G.invincible/6)%2===0)
+    drawIBanFirst(ctx,G.player.x,G.player.y,PW,PH);
+
+  // Player bullets
+  G.pBullets.forEach(b=>{
+    ctx.fillStyle='#64FFA2'; ctx.fillRect(b.x,b.y,3,14);
+    ctx.fillStyle='rgba(100,255,162,0.2)'; ctx.fillRect(b.x-2,b.y,7,14);
+  });
+
+  // Enemy bullets
+  G.eBullets.forEach(b=>{ctx.fillStyle='#FF4444';ctx.fillRect(b.x,b.y,3,10);});
+
+  // Ground line
+  ctx.strokeStyle='rgba(143,64,255,0.25)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(0,H-18); ctx.lineTo(W,H-18); ctx.stroke();
+
+  drawPart(); drawHUD();
+  ctx.restore();
+}
+loop();
+</script>
+</body>
+</html>

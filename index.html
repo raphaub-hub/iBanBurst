@@ -115,21 +115,28 @@ function resizeGame() {
   const lsMob = isMobile && window.innerWidth > window.innerHeight;
   document.body.classList.toggle('ls-mob', lsMob);
 
+  let scale, ctrlH=0;
   if(lsMob){
     // Mobile paysage : plein écran, contrôles dans les coins
     controlsEl.style.display='block';
-    const scale=Math.min(window.innerWidth/W, window.innerHeight/H);
-    canvas.style.width  = Math.floor(W*scale)+'px';
-    canvas.style.height = Math.floor(H*scale)+'px';
+    scale=Math.min(window.innerWidth/W, window.innerHeight/H);
   } else {
-    const ctrlH = isMobile ? 130 : 0;
+    ctrlH = isMobile ? 130 : 0;
     controlsEl.style.display = isMobile ? 'flex' : 'none';
     // Desktop : s'adapte à la fenêtre (95 % de l'espace dispo), pas de cap à 1×
     const factor = isMobile ? 1 : 0.95;
-    const scale=Math.min(window.innerWidth/W, (window.innerHeight-ctrlH)/H)*factor;
-    canvas.style.width  = Math.floor(W*scale)+'px';
-    canvas.style.height = Math.floor(H*scale)+'px';
+    scale=Math.min(window.innerWidth/W, (window.innerHeight-ctrlH)/H)*factor;
   }
+  canvas.style.width  = Math.floor(W*scale)+'px';
+  canvas.style.height = Math.floor(H*scale)+'px';
+
+  // Toast : taille et position proportionnelles au scale du canvas
+  const canvasOffsetY = Math.max(0, (window.innerHeight - ctrlH - Math.floor(H*scale)) / 2);
+  const t = document.getElementById('toast');
+  t.style.fontSize     = Math.round(12*scale)+'px';
+  t.style.padding      = `${Math.round(5*scale)}px ${Math.round(15*scale)}px`;
+  t.style.borderRadius = Math.round(8*scale)+'px';
+  t.style.top          = (canvasOffsetY + Math.round(50*scale))+'px';
 }
 window.addEventListener('resize', resizeGame);
 resizeGame();
@@ -525,7 +532,7 @@ function makeEnemies(waveNum){
   const cols=5,rows=waveNum===1?2:4;
   const gapX=16,gapY=46;
   const startX=(W-cols*(EW+gapX))/2;
-  const startY=72;
+  const startY=105;
   G.enemies=[];
   for(let r=0;r<rows;r++)
     for(let c=0;c<cols;c++){

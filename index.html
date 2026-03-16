@@ -683,11 +683,24 @@ function drawStart(){
   ctx.font='bold 16px Courier New';
   const hint=isMobile?'[ APPUYER SUR 🔥 POUR COMMENCER ]':'[ ESPACE POUR COMMENCER ]';
   ctx.fillText(hint,W/2,H/2+55);
-  const demo=['ebury','wise','airwallex','convera','revolut'];
-  demo.forEach((t,i)=>{
-    const dx=W/2-demo.length*48/2+i*48;
-    DRAW[t](ctx,dx,H/2+100,EW,EH,2);
-    nameLbl(ctx,NAMES[t],dx,H/2+100,EW,EH);
+
+  // Escadron : 5 ennemis en rang 1, 4 en rang 2
+  const row1=['ebury','wise','airwallex','convera','revolut'];
+  const row2=['payoneer','amnis','nium','verto'];
+  const gapX=24;
+  const r1StartX=(W-(row1.length*(EW+gapX)-gapX))/2;
+  const r2StartX=(W-(row2.length*(EW+gapX)-gapX))/2;
+  const baseY1=H/2+95;
+  const baseY2=baseY1+EH+34;
+  row1.forEach((t,i)=>{
+    const fy=Math.sin(Date.now()*0.0022+i*0.9)*5;
+    const x=r1StartX+i*(EW+gapX); const y=baseY1+fy;
+    DRAW[t](ctx,x,y,EW,EH,2); nameLbl(ctx,NAMES[t],x,y,EW,EH);
+  });
+  row2.forEach((t,i)=>{
+    const fy=Math.sin(Date.now()*0.0022+(i+5)*0.9)*5;
+    const x=r2StartX+i*(EW+gapX); const y=baseY2+fy;
+    DRAW[t](ctx,x,y,EW,EH,2); nameLbl(ctx,NAMES[t],x,y,EW,EH);
   });
 }
 
